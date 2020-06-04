@@ -147,9 +147,7 @@ impl Proposer {
 
         self.propose_acceptors
             .iter()
-            .map(|a| {
-                (a.clone(), ProposeReq(ballot.clone(), req.key()))
-            })
+            .map(|a| (a.clone(), ProposeReq(ballot.clone(), req.key())))
             .collect()
     }
 }
@@ -167,9 +165,7 @@ impl Reactor for Proposer {
         let mut clear_ballot = None;
         let mut retry = None;
         let res = match msg {
-            ClientRequest(id, r) => {
-                self.propose(at, from, id, r, false)
-            }
+            ClientRequest(id, r) => self.propose(at, from, id, r, false),
             SetAcceptAcceptors(sas) => {
                 self.accept_acceptors = sas;
                 vec![]
@@ -189,8 +185,7 @@ impl Reactor for Proposer {
                     return vec![];
                 }
 
-                let mut pending =
-                    self.in_flight.get_mut(&req_ballot).unwrap();
+                let mut pending = self.in_flight.get_mut(&req_ballot).unwrap();
 
                 if pending.phase != Phase::Propose {
                     // we've already moved on
@@ -198,8 +193,8 @@ impl Reactor for Proposer {
                 }
 
                 assert!(
-                    !pending.acks_from.contains(&from) &&
-                        !pending.nacks_from.contains(&from),
+                    !pending.acks_from.contains(&from)
+                        && !pending.nacks_from.contains(&from),
                     "somehow got a response from this peer already... \
                     we don't do retries in this game yet!"
                 );
@@ -239,11 +234,9 @@ impl Reactor for Proposer {
                                     pending.client_addr.clone(),
                                     ClientResponse(
                                         pending.id,
-                                        Err(
-                                            Error::ProposalRejected {
-                                                last: last.clone(),
-                                            },
-                                        ),
+                                        Err(Error::ProposalRejected {
+                                            last: last.clone(),
+                                        }),
                                     ),
                                 )]
                             }
@@ -263,13 +256,11 @@ impl Reactor for Proposer {
                         );
                         pending.acks_from.push(from);
 
-                        if last_accepted_ballot
-                            > pending.highest_promise_ballot
+                        if last_accepted_ballot > pending.highest_promise_ballot
                         {
                             pending.highest_promise_ballot =
                                 last_accepted_ballot;
-                            pending.highest_promise_value =
-                                last_accepted_value;
+                            pending.highest_promise_value = last_accepted_value;
                         }
 
                         if pending.acks_from.len() >= majority {
@@ -300,10 +291,7 @@ impl Reactor for Proposer {
                             vec![]
                         }
                     }
-                    other => panic!(
-                        "got unhandled ProposeRes: {:?}",
-                        other
-                    ),
+                    other => panic!("got unhandled ProposeRes: {:?}", other),
                 }
             }
             AcceptRes(ballot, res) => {
@@ -312,8 +300,7 @@ impl Reactor for Proposer {
                     return vec![];
                 }
 
-                let mut pending =
-                    self.in_flight.get_mut(&ballot).unwrap();
+                let pending = self.in_flight.get_mut(&ballot).unwrap();
 
                 assert_eq!(
                     pending.phase,
@@ -322,8 +309,8 @@ impl Reactor for Proposer {
                 );
 
                 assert!(
-                    !pending.acks_from.contains(&from) &&
-                        !pending.nacks_from.contains(&from),
+                    !pending.acks_from.contains(&from)
+                        && !pending.nacks_from.contains(&from),
                     "somehow got a response from this peer already... \
                     we don't do retries in this game yet!"
                 );
@@ -372,9 +359,10 @@ impl Reactor for Proposer {
                                 pending.client_addr.clone(),
                                 ClientResponse(
                                     pending.id,
-                                    pending.cas_failed.clone().map(
-                                        |_| pending.new_v.clone(),
-                                    ),
+                                    pending
+                                        .cas_failed
+                                        .clone()
+                                        .map(|_| pending.new_v.clone()),
                                 ),
                             )]
                         } else {
@@ -382,14 +370,10 @@ impl Reactor for Proposer {
                             vec![]
                         }
                     }
-                    other => {
-                        panic!("got unhandled AcceptRes: {:?}", other)
-                    }
+                    other => panic!("got unhandled AcceptRes: {:?}", other),
                 }
             }
-            other => {
-                panic!("proposer got unhandled rpc: {:?}", other)
-            }
+            other => panic!("proposer got unhandled rpc: {:?}", other),
         };
 
         if let Some(ballot) = clear_ballot.take() {
@@ -404,14 +388,10 @@ impl Reactor for Proposer {
     }
 
     // we use tick to handle timeouts
-    fn tick(
-        &mut self,
-        at: SystemTime,
-    ) -> Vec<(Self::Peer, Self::Message)> {
+    fn tick(&mut self, at: SystemTime) -> Vec<(Self::Peer, Self::Message)> {
         let ret = {
             let late = self.in_flight.values().filter(|i| {
-                at.duration_since(i.received_at).unwrap()
-                    > self.timeout
+                at.duration_since(i.received_at).unwrap() > self.timeout
             });
 
             late.map(|pending| {
@@ -419,7 +399,8 @@ impl Reactor for Proposer {
                     pending.client_addr.clone(),
                     ClientResponse(pending.id, Err(Error::Timeout)),
                 )
-            }).collect()
+            })
+            .collect()
         };
 
         let timeout = self.timeout.clone();

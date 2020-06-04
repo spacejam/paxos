@@ -1,15 +1,13 @@
-extern crate paxos;
 /// Simulation for network partitions. Like Jepsen but thousands of times faster.
-extern crate quickcheck;
-extern crate rand;
-
 use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap};
 use std::ops::Add;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use self::paxos::*;
-use self::quickcheck::{Arbitrary, Gen, QuickCheck, StdGen};
+use quickcheck::{Arbitrary, Gen, QuickCheck, StdGen};
+use rand::{prelude::SliceRandom, Rng};
+
+use paxos::{Acceptor, Error, Proposer, Reactor, Req, Rpc};
 
 #[derive(PartialOrd, Ord, Eq, PartialEq, Debug, Clone)]
 struct Partition {
@@ -26,8 +24,7 @@ impl Partition {
         proposers: usize,
         acceptors: usize,
     ) -> Self {
-        static NAMES: [&'static str; 3] =
-            ["client:", "proposer:", "acceptor:"];
+        static NAMES: [&'static str; 3] = ["client:", "proposer:", "acceptor:"];
 
         let from_choice = g.gen_range(0, 3);
         let mut to_choice = g.gen_range(0, 3);
@@ -36,8 +33,7 @@ impl Partition {
             to_choice = g.gen_range(0, 3);
         }
 
-        let at =
-            UNIX_EPOCH.add(Duration::new(0, g.gen_range(0, 100)));
+        let at = UNIX_EPOCH.add(Duration::new(0, g.gen_range(0, 100)));
         let duration = Duration::new(0, g.gen_range(0, 100));
 
         let mut n = |choice| match choice {
@@ -47,8 +43,7 @@ impl Partition {
             _ => panic!("too high"),
         };
 
-        let from =
-            format!("{}{}", NAMES[from_choice], n(from_choice));
+        let from = format!("{}{}", NAMES[from_choice], n(from_choice));
         let to = format!("{}{}", NAMES[to_choice], n(to_choice));
         Partition {
             at: at,
@@ -79,7 +74,7 @@ impl Arbitrary for ClientRequest {
             1 => ClientRequest::Del,
             2 => ClientRequest::Set(vec![g.gen_range(0, 2)]),
             _ => ClientRequest::Cas(
-                if g.gen_weighted_bool(3) {
+                if g.gen_ratio(1, 3) {
                     None
                 } else {
                     Some(vec![g.gen_range(0, 2)])
@@ -108,10 +103,7 @@ impl Ord for ScheduledMessage {
 }
 
 impl PartialOrd for ScheduledMessage {
-    fn partial_cmp(
-        &self,
-        other: &ScheduledMessage,
-    ) -> Option<Ordering> {
+    fn partial_cmp(&self, other: &ScheduledMessage) -> Option<Ordering> {
         Some(self.cmp(other))
     }
 }
@@ -133,12 +125,8 @@ impl Reactor for Node {
         msg: Self::Message,
     ) -> Vec<(Self::Peer, Self::Message)> {
         match *self {
-            Node::Proposer(ref mut inner) => {
-                inner.receive(at, from, msg)
-            }
-            Node::Acceptor(ref mut inner) => {
-                inner.receive(at, from, msg)
-            }
+            Node::Proposer(ref mut inner) => inner.receive(at, from, msg),
+            Node::Acceptor(ref mut inner) => inner.receive(at, from, msg),
         }
     }
 }
@@ -184,12 +172,7 @@ impl Cluster {
         }
     }
 
-    fn is_partitioned(
-        &mut self,
-        at: SystemTime,
-        to: &str,
-        from: &str,
-    ) -> bool {
+    fn is_partitioned(&mut self, at: SystemTime, to: &str, from: &str) -> bool {
         let mut to_clear = vec![];
         let mut ret = false;
         for (i, partition) in self.partitions.iter().enumerate() {
@@ -197,9 +180,7 @@ impl Cluster {
                 break;
             }
 
-            if partition.at <= at
-                && partition.at.add(partition.duration) < at
-            {
+            if partition.at <= at && partition.at.add(partition.duration) < at {
                 to_clear.push(i);
                 continue;
             }
@@ -254,9 +235,7 @@ impl Arbitrary for Cluster {
 
         let acceptors: Vec<(String, Node)> = acceptor_addrs
             .iter()
-            .map(|addr| {
-                (addr.clone(), Node::Acceptor(Acceptor::default()))
-            })
+            .map(|addr| (addr.clone(), Node::Acceptor(Acceptor::default())))
             .collect();
 
         let mut requests = vec![];
@@ -271,9 +250,7 @@ impl Arbitrary for Cluster {
                 let req = match ClientRequest::arbitrary(g) {
                     ClientRequest::Get => Req::Get(vec![k]),
                     ClientRequest::Set(v) => Req::Set(vec![k], v),
-                    ClientRequest::Cas(ov, nv) => {
-                        Req::Cas(vec![k], ov, nv)
-                    }
+                    ClientRequest::Cas(ov, nv) => Req::Cas(vec![k], ov, nv),
                     ClientRequest::Del => Req::Del(vec![k]),
                 };
 
@@ -284,7 +261,9 @@ impl Arbitrary for Cluster {
                 requests.push(ScheduledMessage {
                     at: UNIX_EPOCH.add(Duration::new(0, at)),
                     from: client_addr.clone(),
-                    to: g.choose(&proposer_addrs).unwrap().clone(),
+                    to: SliceRandom::choose(&*proposer_addrs, g)
+                        .unwrap()
+                        .clone(),
                     msg: msg,
                 });
             }
@@ -303,17 +282,14 @@ impl Arbitrary for Cluster {
         partitions.sort();
 
         Cluster {
-            peers: proposers
-                .into_iter()
-                .chain(acceptors.into_iter())
-                .collect(),
+            peers: proposers.into_iter().chain(acceptors.into_iter()).collect(),
             partitions: partitions,
             in_flight: requests.clone().into_iter().collect(),
             client_responses: vec![],
         }
     }
 
-    fn shrink(&self) -> Box<Iterator<Item = Cluster>> {
+    fn shrink(&self) -> Box<dyn Iterator<Item = Cluster>> {
         let mut ret = vec![];
 
         for i in 0..self.in_flight.len() {
@@ -413,12 +389,9 @@ fn check_linearizability(
         //  GET | ok   | -        | -         | value
         //  GET | ?    | -        | -         | value?
         match responses.get(&id) {
-            None |
-            Some(&(_, Err(Error::Timeout))) |
-            Some(&(_,
-                   Err(Error::AcceptRejected {
-                           ..
-                       }))) => {
+            None
+            | Some(&(_, Err(Error::Timeout)))
+            | Some(&(_, Err(Error::AcceptRejected { .. }))) => {
                 // not sure if this actually took effect or not.
                 // NB this is sort of weird, because even if an accept was
                 // rejected by a majority, it may be used as a later message.
@@ -433,26 +406,22 @@ fn check_linearizability(
                     Get(_k) => {}
                 }
             }
-            Some(&(end, Ok(ref v))) => {
-                match req {
-                    Cas(k, old, new) => {
-                        consumes.push((k.clone(), end, old.clone(), id));
-                        observes.push((k.clone(), end, old, id));
-                        publishes.push((k.clone(), begin, new, id));
-                    }
-                    Get(k) => observes.push((k, end, v.clone(), id)),
-                    Del(k) => publishes.push((k, end, None, id)),
-                    Set(k, value) => publishes.push((k, end, Some(value), id)),
+            Some(&(end, Ok(ref v))) => match req {
+                Cas(k, old, new) => {
+                    consumes.push((k.clone(), end, old.clone(), id));
+                    observes.push((k.clone(), end, old, id));
+                    publishes.push((k.clone(), begin, new, id));
                 }
-            }
-            Some(&(end, Err(Error::CasFailed(ref witnessed)))) => {
-                match req {
-                    Cas(k, _old, _new) => {
-                        observes.push((k, end, witnessed.clone(), id));
-                    }
-                    _ => panic!("non-cas request found for CasFailed response"),
+                Get(k) => observes.push((k, end, v.clone(), id)),
+                Del(k) => publishes.push((k, end, None, id)),
+                Set(k, value) => publishes.push((k, end, Some(value), id)),
+            },
+            Some(&(end, Err(Error::CasFailed(ref witnessed)))) => match req {
+                Cas(k, _old, _new) => {
+                    observes.push((k, end, witnessed.clone(), id));
                 }
-            }
+                _ => panic!("non-cas request found for CasFailed response"),
+            },
             _ => {
                 // propose/accept failure, no actionable info can be derived
             }
@@ -462,7 +431,7 @@ fn check_linearizability(
     let mut events_per_k = HashMap::new();
 
     for (k, time, value, id) in publishes {
-        let mut events = events_per_k.entry(k).or_insert(vec![]);
+        let events = events_per_k.entry(k).or_insert(vec![]);
         events.push(Event {
             at: time,
             act: Act::Publish(value),
@@ -471,7 +440,7 @@ fn check_linearizability(
     }
 
     for (k, time, value, id) in consumes {
-        let mut events = events_per_k.entry(k).or_insert(vec![]);
+        let events = events_per_k.entry(k).or_insert(vec![]);
         events.push(Event {
             at: time,
             act: Act::Consume(value),
@@ -480,7 +449,7 @@ fn check_linearizability(
     }
 
     for (k, time, value, id) in observes {
-        let mut events = events_per_k.entry(k).or_insert(vec![]);
+        let events = events_per_k.entry(k).or_insert(vec![]);
         events.push(Event {
             at: time,
             act: Act::Observe(value),
@@ -498,7 +467,7 @@ fn check_linearizability(
             // println!("k: {:?}, event: {:?}", _k, event);
             match event.act {
                 Act::Publish(v) => {
-                    let mut entry = value_pool.entry(v).or_insert(0);
+                    let entry = value_pool.entry(v).or_insert(0);
                     *entry += 1;
                 }
                 Act::Observe(v) => {
@@ -512,7 +481,7 @@ fn check_linearizability(
                     )
                 }
                 Act::Consume(v) => {
-                    let mut count = value_pool.get_mut(&v).unwrap();
+                    let count = value_pool.get_mut(&v).unwrap();
                     assert!(*count > 0);
                     *count -= 1;
                 }
@@ -538,9 +507,7 @@ fn test_quickcheck_paxos_linearizes() {
         .gen(StdGen::new(rand::thread_rng(), 100))
         .tests(10000)
         .max_tests(1000000)
-        .quickcheck(
-            prop_cluster_linearizability as fn(Cluster) -> bool,
-        );
+        .quickcheck(prop_cluster_linearizability as fn(Cluster) -> bool);
 }
 
 #[test]
@@ -551,18 +518,9 @@ fn linearizability_bug_01() {
     // a single ACCEPT on any node.
     prop_cluster_linearizability(Cluster {
         peers: vec![
-            (
-                "acceptor:0".to_owned(),
-                Node::Acceptor(Acceptor::default()),
-            ),
-            (
-                "acceptor:1".to_owned(),
-                Node::Acceptor(Acceptor::default()),
-            ),
-            (
-                "acceptor:2".to_owned(),
-                Node::Acceptor(Acceptor::default()),
-            ),
+            ("acceptor:0".to_owned(), Node::Acceptor(Acceptor::default())),
+            ("acceptor:1".to_owned(), Node::Acceptor(Acceptor::default())),
+            ("acceptor:2".to_owned(), Node::Acceptor(Acceptor::default())),
             (
                 "proposer:0".to_owned(),
                 Node::Proposer(Proposer::new(
@@ -596,8 +554,9 @@ fn linearizability_bug_01() {
                     ],
                 )),
             ),
-        ].into_iter()
-            .collect(),
+        ]
+        .into_iter()
+        .collect(),
         partitions: vec![],
         in_flight: vec![
             ScheduledMessage {
@@ -606,11 +565,7 @@ fn linearizability_bug_01() {
                 to: "proposer:1".to_owned(),
                 msg: Rpc::ClientRequest(
                     9,
-                    Req::Cas(
-                        b"k1".to_vec(),
-                        Some(vec![1]),
-                        Some(vec![1]),
-                    ),
+                    Req::Cas(b"k1".to_vec(), Some(vec![1]), Some(vec![1])),
                 ),
             },
             ScheduledMessage {
@@ -628,11 +583,7 @@ fn linearizability_bug_01() {
                 to: "proposer:1".to_owned(),
                 msg: Rpc::ClientRequest(
                     11,
-                    Req::Cas(
-                        b"k1".to_vec(),
-                        Some(vec![1]),
-                        Some(vec![1]),
-                    ),
+                    Req::Cas(b"k1".to_vec(), Some(vec![1]), Some(vec![1])),
                 ),
             },
             ScheduledMessage {
@@ -641,11 +592,7 @@ fn linearizability_bug_01() {
                 to: "proposer:0".to_owned(),
                 msg: Rpc::ClientRequest(
                     6,
-                    Req::Cas(
-                        b"k1".to_vec(),
-                        Some(vec![0]),
-                        Some(vec![1]),
-                    ),
+                    Req::Cas(b"k1".to_vec(), Some(vec![0]), Some(vec![1])),
                 ),
             },
             ScheduledMessage {
@@ -654,11 +601,7 @@ fn linearizability_bug_01() {
                 to: "proposer:2".to_owned(),
                 msg: Rpc::ClientRequest(
                     3,
-                    Req::Cas(
-                        b"k1".to_vec(),
-                        Some(vec![0]),
-                        Some(vec![1]),
-                    ),
+                    Req::Cas(b"k1".to_vec(), Some(vec![0]), Some(vec![1])),
                 ),
             },
             ScheduledMessage {
@@ -667,11 +610,7 @@ fn linearizability_bug_01() {
                 to: "proposer:2".to_owned(),
                 msg: Rpc::ClientRequest(
                     4,
-                    Req::Cas(
-                        b"k1".to_vec(),
-                        Some(vec![0]),
-                        Some(vec![0]),
-                    ),
+                    Req::Cas(b"k1".to_vec(), Some(vec![0]), Some(vec![0])),
                 ),
             },
             ScheduledMessage {
@@ -680,11 +619,7 @@ fn linearizability_bug_01() {
                 to: "proposer:2".to_owned(),
                 msg: Rpc::ClientRequest(
                     7,
-                    Req::Cas(
-                        b"k1".to_vec(),
-                        Some(vec![0]),
-                        Some(vec![1]),
-                    ),
+                    Req::Cas(b"k1".to_vec(), Some(vec![0]), Some(vec![1])),
                 ),
             },
             ScheduledMessage {
@@ -693,11 +628,7 @@ fn linearizability_bug_01() {
                 to: "proposer:2".to_owned(),
                 msg: Rpc::ClientRequest(
                     8,
-                    Req::Cas(
-                        b"k1".to_vec(),
-                        Some(vec![1]),
-                        Some(vec![1]),
-                    ),
+                    Req::Cas(b"k1".to_vec(), Some(vec![1]), Some(vec![1])),
                 ),
             },
             ScheduledMessage {
@@ -706,11 +637,7 @@ fn linearizability_bug_01() {
                 to: "proposer:0".to_owned(),
                 msg: Rpc::ClientRequest(
                     2,
-                    Req::Cas(
-                        b"k1".to_vec(),
-                        Some(vec![0]),
-                        Some(vec![1]),
-                    ),
+                    Req::Cas(b"k1".to_vec(), Some(vec![0]), Some(vec![1])),
                 ),
             },
             ScheduledMessage {
@@ -719,11 +646,7 @@ fn linearizability_bug_01() {
                 to: "proposer:1".to_owned(),
                 msg: Rpc::ClientRequest(
                     10,
-                    Req::Cas(
-                        b"k1".to_vec(),
-                        Some(vec![0]),
-                        Some(vec![0]),
-                    ),
+                    Req::Cas(b"k1".to_vec(), Some(vec![0]), Some(vec![0])),
                 ),
             },
             ScheduledMessage {
@@ -732,15 +655,12 @@ fn linearizability_bug_01() {
                 to: "proposer:1".to_owned(),
                 msg: Rpc::ClientRequest(
                     5,
-                    Req::Cas(
-                        b"k1".to_vec(),
-                        Some(vec![0]),
-                        Some(vec![1]),
-                    ),
+                    Req::Cas(b"k1".to_vec(), Some(vec![0]), Some(vec![1])),
                 ),
             },
-        ].into_iter()
-            .collect(),
+        ]
+        .into_iter()
+        .collect(),
         client_responses: vec![],
     });
 }

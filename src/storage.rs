@@ -6,12 +6,12 @@ use super::*;
 
 /// Use Storage to plug this CASPaxos instance into an underlying store.
 pub trait Storage: Clone {
-    fn get_highest_seen(&mut self, Key) -> Ballot;
-    fn get_accepted_ballot(&mut self, Key) -> Ballot;
-    fn get_accepted_value(&mut self, Key) -> Option<Value>;
-    fn set_highest_seen(&mut self, Key, Ballot);
-    fn set_accepted_ballot(&mut self, Key, Ballot);
-    fn set_accepted_value(&mut self, Key, Option<Value>);
+    fn get_highest_seen(&mut self, key: Key) -> Ballot;
+    fn get_accepted_ballot(&mut self, key: Key) -> Ballot;
+    fn get_accepted_value(&mut self, key: Key) -> Option<Value>;
+    fn set_highest_seen(&mut self, key: Key, ballot: Ballot);
+    fn set_accepted_ballot(&mut self, key: Key, ballot: Ballot);
+    fn set_accepted_value(&mut self, key: Key, value: Option<Value>);
 }
 
 const HIGHEST_SEEN_SUFFIX: u8 = 0;
@@ -54,11 +54,7 @@ impl Storage for MemStorage {
         let v = serialize(&ballot).unwrap();
         self.inner.insert(k, v);
     }
-    fn set_accepted_value(
-        &mut self,
-        mut k: Key,
-        value: Option<Value>,
-    ) {
+    fn set_accepted_value(&mut self, mut k: Key, value: Option<Value>) {
         k.push(LAST_VALUE_SUFFIX);
         if let Some(v) = value {
             self.inner.insert(k, v);
@@ -98,28 +94,24 @@ impl Storage for SledStorage {
     }
     fn get_accepted_value(&mut self, mut k: Key) -> Option<Value> {
         k.push(LAST_VALUE_SUFFIX);
-        self.inner.get(&k).unwrap()
+        self.inner.get(&k).unwrap().map(|iv| iv.to_vec())
     }
     fn set_highest_seen(&mut self, mut k: Key, ballot: Ballot) {
         k.push(HIGHEST_SEEN_SUFFIX);
         let v = serialize(&ballot).unwrap();
-        self.inner.set(k, v).unwrap();
+        self.inner.insert(k, v).unwrap();
     }
     fn set_accepted_ballot(&mut self, mut k: Key, ballot: Ballot) {
         k.push(LAST_BALLOT_SUFFIX);
         let v = serialize(&ballot).unwrap();
-        self.inner.set(k, v).unwrap();
+        self.inner.insert(k, v).unwrap();
     }
-    fn set_accepted_value(
-        &mut self,
-        mut k: Key,
-        value: Option<Value>,
-    ) {
+    fn set_accepted_value(&mut self, mut k: Key, value: Option<Value>) {
         k.push(LAST_VALUE_SUFFIX);
         if let Some(v) = value {
-            self.inner.set(k, v).unwrap();
+            self.inner.insert(k, v).unwrap();
         } else {
-            self.inner.del(&k).unwrap();
+            self.inner.remove(&k).unwrap();
         }
     }
 }

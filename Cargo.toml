@@ -12,11 +12,11 @@ readme = "README.md"
 edition = "2018"
 
 [dependencies]
-sled = "0.15"
-bincode = "1.0"
-serde = "1.0"
-serde_derive = "1.0"
+sled = "0.31.0"
+bincode = "1.2.1"
+serde = "1.0.111"
+serde_derive = "1.0.111"
 
 [dev-dependencies]
-quickcheck = "0.7"
-rand = "0.5"
+quickcheck = "0.9.2"
+rand = "0.7.3"

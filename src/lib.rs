@@ -32,23 +32,31 @@ pub trait Reactor: Debug + Clone {
         msg: Self::Message,
     ) -> Vec<(Self::Peer, Self::Message)>;
 
-    fn tick(
-        &mut self,
-        _at: SystemTime,
-    ) -> Vec<(Self::Peer, Self::Message)> {
+    fn tick(&mut self, _at: SystemTime) -> Vec<(Self::Peer, Self::Message)> {
         vec![]
     }
 }
 
-#[derive(Default, Clone, Debug, PartialOrd, PartialEq, Eq, Hash,
-         Ord, Serialize, Deserialize)]
+#[derive(
+    Default,
+    Clone,
+    Debug,
+    PartialOrd,
+    PartialEq,
+    Eq,
+    Hash,
+    Ord,
+    Serialize,
+    Deserialize,
+)]
 pub struct Ballot(u64);
 
 type Key = Vec<u8>;
 type Value = Vec<u8>;
 
-#[derive(PartialOrd, Ord, Eq, PartialEq, Debug, Clone, Serialize,
-         Deserialize)]
+#[derive(
+    PartialOrd, Ord, Eq, PartialEq, Debug, Clone, Serialize, Deserialize,
+)]
 pub enum Req {
     Get(Key),
     Del(Key),
@@ -67,8 +75,9 @@ impl Req {
     }
 }
 
-#[derive(Debug, PartialEq, PartialOrd, Ord, Eq, Clone, Serialize,
-         Deserialize)]
+#[derive(
+    Debug, PartialEq, PartialOrd, Ord, Eq, Clone, Serialize, Deserialize,
+)]
 pub enum Rpc {
     ClientRequest(u64, Req),
     ClientResponse(u64, Result<Option<Value>, Error>),
@@ -102,8 +111,9 @@ impl Rpc {
     }
 }
 
-#[derive(Debug, PartialEq, PartialOrd, Ord, Eq, Clone, Serialize,
-         Deserialize)]
+#[derive(
+    Debug, PartialEq, PartialOrd, Ord, Eq, Clone, Serialize, Deserialize,
+)]
 pub enum Error {
     ProposalRejected { last: Ballot },
     AcceptRejected { last: Ballot },
