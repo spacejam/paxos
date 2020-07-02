@@ -5,7 +5,7 @@ use bincode::{deserialize, serialize};
 use super::*;
 
 /// Use Storage to plug this CASPaxos instance into an underlying store.
-pub trait Storage: Clone {
+pub trait Storage: Clone + Debug {
     fn get_highest_seen(&mut self, key: Key) -> Ballot;
     fn get_accepted_ballot(&mut self, key: Key) -> Ballot;
     fn get_accepted_value(&mut self, key: Key) -> Option<Value>;
@@ -18,7 +18,7 @@ const HIGHEST_SEEN_SUFFIX: u8 = 0;
 const LAST_BALLOT_SUFFIX: u8 = 1;
 const LAST_VALUE_SUFFIX: u8 = 2;
 
-#[derive(Default, Clone)]
+#[derive(Default, Clone, Debug)]
 pub struct MemStorage {
     inner: HashMap<Key, Value>,
 }
@@ -64,7 +64,7 @@ impl Storage for MemStorage {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct SledStorage {
     inner: sled::Tree,
 }

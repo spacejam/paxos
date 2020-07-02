@@ -1,7 +1,6 @@
 use super::*;
 
 use std::collections::HashMap;
-use std::fmt;
 
 #[derive(Eq, PartialEq, Debug, Clone)]
 enum Phase {
@@ -9,7 +8,7 @@ enum Phase {
     Accept,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Pending {
     client_addr: String,
     id: u64,
@@ -57,40 +56,6 @@ impl Pending {
         self.nacks_from = vec![];
         self.waiting_for = acceptors;
         self.apply_op();
-    }
-}
-
-impl fmt::Debug for Pending {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(
-            f,
-            "Pending {{
-                client_addr: {},
-                id: {},
-                new_v: {:?},
-                phase: {:?},
-                waiting_for: {:?},
-                acks_from: {:?},
-                nacks_from: {:?},
-                highest_promise_ballot: {:?},
-                highest_promise_value: {:?},
-                received_at: {:?},
-                cas_failed: {:?},
-                has_retried_once: {},
-            }}",
-            self.client_addr,
-            self.id,
-            self.new_v,
-            self.phase,
-            self.waiting_for,
-            self.acks_from,
-            self.nacks_from,
-            self.highest_promise_ballot,
-            self.highest_promise_value,
-            self.received_at,
-            self.cas_failed,
-            self.has_retried_once,
-        )
     }
 }
 
@@ -164,7 +129,7 @@ impl Reactor for Proposer {
     ) -> Vec<(Self::Peer, Self::Message)> {
         let mut clear_ballot = None;
         let mut retry = None;
-        let res = match msg {
+        let mut res = match msg {
             ClientRequest(id, r) => self.propose(at, from, id, r, false),
             SetAcceptAcceptors(sas) => {
                 self.accept_acceptors = sas;
@@ -383,32 +348,29 @@ impl Reactor for Proposer {
         if let Some((received_at, client_addr, id, req)) = retry {
             self.propose(received_at, client_addr, id, req, true)
         } else {
-            res
-        }
-    }
+            let mut timeouts: Vec<_> = {
+                let late = self.in_flight.values().filter(|i| {
+                    at.duration_since(i.received_at).unwrap() > self.timeout
+                });
 
-    // we use tick to handle timeouts
-    fn tick(&mut self, at: SystemTime) -> Vec<(Self::Peer, Self::Message)> {
-        let ret = {
-            let late = self.in_flight.values().filter(|i| {
-                at.duration_since(i.received_at).unwrap() > self.timeout
+                late.map(|pending| {
+                    (
+                        pending.client_addr.clone(),
+                        ClientResponse(pending.id, Err(Error::Timeout)),
+                    )
+                })
+                .collect()
+            };
+
+            res.append(&mut timeouts);
+
+            let timeout = self.timeout.clone();
+
+            self.in_flight.retain(|_, i| {
+                at.duration_since(i.received_at).unwrap() <= timeout
             });
 
-            late.map(|pending| {
-                (
-                    pending.client_addr.clone(),
-                    ClientResponse(pending.id, Err(Error::Timeout)),
-                )
-            })
-            .collect()
-        };
-
-        let timeout = self.timeout.clone();
-
-        self.in_flight.retain(|_, i| {
-            at.duration_since(i.received_at).unwrap() <= timeout
-        });
-
-        ret
+            res
+        }
     }
 }

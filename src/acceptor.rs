@@ -1,22 +1,11 @@
-use std::fmt;
-
 use super::*;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Acceptor<S>
 where
     S: Clone,
 {
     store: S,
-}
-
-impl<S> fmt::Debug for Acceptor<S>
-where
-    S: Clone,
-{
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "Acceptor {{}}",)
-    }
 }
 
 impl<S> Default for Acceptor<S>
@@ -45,21 +34,19 @@ where
     ) -> Vec<(Self::Peer, Self::Message)> {
         match msg {
             ProposeReq(ballot, key) => {
-                let current_ballot =
-                    self.store.get_highest_seen(key.clone());
+                let current_ballot = self.store.get_highest_seen(key.clone());
 
                 if ballot > current_ballot {
-                    self.store.set_highest_seen(
-                        key.clone(),
-                        ballot.clone(),
-                    );
+                    self.store.set_highest_seen(key.clone(), ballot.clone());
                     vec![(
                         from,
                         ProposeRes {
                             req_ballot: ballot,
-                            last_accepted_ballot: self.store
+                            last_accepted_ballot: self
+                                .store
                                 .get_accepted_ballot(key.clone()),
-                            last_accepted_value: self.store
+                            last_accepted_value: self
+                                .store
                                 .get_accepted_value(key.clone()),
                             res: Ok(()),
                         },
@@ -69,9 +56,11 @@ where
                         from,
                         ProposeRes {
                             req_ballot: ballot,
-                            last_accepted_ballot: self.store
+                            last_accepted_ballot: self
+                                .store
                                 .get_accepted_ballot(key.clone()),
-                            last_accepted_value: self.store
+                            last_accepted_value: self
+                                .store
                                 .get_accepted_value(key.clone()),
                             res: Err(Error::ProposalRejected {
                                 last: current_ballot,
@@ -81,17 +70,10 @@ where
                 }
             }
             AcceptReq(ballot, key, to) => {
-                let current_ballot =
-                    self.store.get_highest_seen(key.clone());
+                let current_ballot = self.store.get_highest_seen(key.clone());
                 if ballot >= current_ballot {
-                    self.store.set_highest_seen(
-                        key.clone(),
-                        ballot.clone(),
-                    );
-                    self.store.set_accepted_ballot(
-                        key.clone(),
-                        ballot.clone(),
-                    );
+                    self.store.set_highest_seen(key.clone(), ballot.clone());
+                    self.store.set_accepted_ballot(key.clone(), ballot.clone());
                     self.store.set_accepted_value(key.clone(), to);
                     vec![(from, AcceptRes(ballot, Ok(())))]
                 } else {

@@ -1,24 +1,49 @@
-#[macro_use]
-extern crate serde_derive;
-extern crate bincode;
-extern crate serde;
-extern crate sled;
-
 use std::fmt::Debug;
 use std::time::{Duration, SystemTime};
 
 use serde::de::DeserializeOwned;
 use serde::Serialize;
+use serde_derive::{Deserialize, Serialize};
 
 mod acceptor;
 mod client;
 mod proposer;
 mod storage;
+mod udp_transport;
 
 pub use acceptor::Acceptor;
 pub use client::Client;
 pub use proposer::Proposer;
 pub use storage::{MemStorage, SledStorage};
+pub use udp_transport::UdpTransport;
+
+/// An abstraction over network communication.
+/// It is not expected to provide fault tolerance.
+/// It may send messages 0 times, or many times.
+/// The expectation is that as long as the messages
+/// are sometimes sent, that forward progress will
+/// happen eventually.
+pub trait Transport<R: Reactor> {
+    /// Blocks until the next message is received.
+    fn next_message(&mut self) -> (R::Peer, R::Message);
+
+    /// Enqueues the message to be sent. May be sent 0-N times with no ordering guarantees.
+    fn send_message(&mut self, to: R::Peer, msg: R::Message);
+
+    /// Runs a reactor on the transport.
+    fn run(&mut self, mut reactor: R) {
+        loop {
+            let (from, msg) = self.next_message();
+            let now = SystemTime::now();
+
+            let outbound = reactor.receive(now, from, msg);
+
+            for (to, msg) in outbound {
+                self.send_message(to, msg);
+            }
+        }
+    }
+}
 
 // Reactor is a trait for building simulable systems.
 pub trait Reactor: Debug + Clone {
@@ -31,10 +56,6 @@ pub trait Reactor: Debug + Clone {
         from: Self::Peer,
         msg: Self::Message,
     ) -> Vec<(Self::Peer, Self::Message)>;
-
-    fn tick(&mut self, _at: SystemTime) -> Vec<(Self::Peer, Self::Message)> {
-        vec![]
-    }
 }
 
 #[derive(
