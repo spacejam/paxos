@@ -12,11 +12,13 @@ readme = "README.md"
 edition = "2018"
 
 [dependencies]
-sled = "0.31.0"
+sled = "0.32.0"
 bincode = "1.2.1"
 serde = "1.0.111"
 serde_derive = "1.0.112"
 crc32fast = "1.2.0"
+rand = "0.7.3"
+uuid = { version = "0.8.1", features = ["serde", "v4"] }
 
 [dev-dependencies]
 quickcheck = "0.9.2"
